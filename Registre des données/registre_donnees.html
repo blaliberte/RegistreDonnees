@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIRE — Registre des sources de données</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          'aire-royal': '#0F408F',
+          'aire-night': '#00255B',
+          'aire-burgundy': '#461220',
+          'aire-ivory': '#F8F3ED',
+          'aire-glacier': '#DCEAF6',
+          'aire-coral': '#FF6B57',
+        },
+        fontFamily: {
+          heading: ['"Bricolage Grotesque"', 'sans-serif'],
+          body: ['"Work Sans"', 'sans-serif'],
+        }
+      }
+    }
+  }
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=Work+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = "https://rutkgkkczklaviblobnn.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_vwbj0w36hpWhA7KpB2lpnA_R779E94e";
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+</script>
+<style>
+  body { font-family: 'Work Sans', sans-serif; }
+  h1, h2, h3, .font-heading { font-family: 'Bricolage Grotesque', sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #F8F3ED; }
+  ::-webkit-scrollbar-thumb { background: #0F408F; border-radius: 4px; }
+  .custom-dropdown-scroll { max-height: 320px; overflow-y: auto; }
+  .field-multiline { white-space: pre-line; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in { animation: fadeIn .18s ease-out; }
+</style>
+</head>
+<body class="bg-aire-ivory text-aire-night">
+<div id="root"></div>
+
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef } = React;
+
+const Icon = ({ name, size = 18, className = "" }) => (
+  <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>
+);
+
+const FIELD_LABELS = {
+  lienWeb: "Lien web",
+  source: "Source",
+  derniereMaj: "Dernière MAJ",
+  annee: "Année couverte",
+  decoupage: "Découpage",
+  themes: "Thèmes",
+  indicateurs: "Indicateurs",
+  age: "Âge",
+  variablesPortrait: "Variables pour portrait",
+  donneesSupp: "Données (supplémentaire)",
+  format: "Format",
+  methodologie: "Méthodologie",
+  n: "Taille des données",
+};
+
+const FIELD_ORDER = ["lienWeb", "annee", "decoupage", "themes", "indicateurs", "age", "variablesPortrait", "donneesSupp", "format", "methodologie", "n"];
+
+const MULTILINE_FIELDS = new Set(["lienWeb", "source", "derniereMaj", "decoupage", "methodologie", "indicateurs", "variablesPortrait", "annee", "age", "n", "donneesSupp", "themes"]);
+
+function splitSources(str) {
+  return (str || "").split(/\s*;\s*/).map(s => s.trim()).filter(Boolean);
+}
+
+const CSV_HEADERS = {
+  titre: "Données",
+  lienWeb: "Lien web",
+  source: "Source",
+  derniereMaj: "Dernière MAJ",
+  annee: "Année",
+  decoupage: "Découpage",
+  themes: "Thèmes",
+  indicateurs: "Indicateurs",
+  age: "Âge",
+  variablesPortrait: "Variables pour portrait",
+  motsCles: "Mots-clés",
+  donneesSupp: "Données.1",
+  format: "Format",
+  methodologie: "Méthodologie",
+  n: "N",
+};
+const CSV_FIELD_ORDER = ["titre", "lienWeb", "source", "derniereMaj", "annee", "decoupage", "themes", "indicateurs", "age", "variablesPortrait", "motsCles", "donneesSupp", "format", "methodologie", "n"];
+
+function csvEscape(val) {
+  const v = (val || "").toString();
+  if (/[;"\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportJson(data) {
+  downloadFile("SourcesDonnees.json", JSON.stringify(data, null, 2), "application/json");
+}
+
+function exportCsv(data) {
+  const headerLine = CSV_FIELD_ORDER.map(f => csvEscape(CSV_HEADERS[f])).join(";");
+  const lines = data.map(item => CSV_FIELD_ORDER.map(f => csvEscape(item[f])).join(";"));
+  downloadFile("SourcesDonnees.csv", "\uFEFF" + [headerLine, ...lines].join("\r\n"), "text/csv;charset=utf-8");
+}
+
+const EDIT_FIELD_ORDER = ["titre", "lienWeb", "source", "derniereMaj", "annee", "decoupage", "themes", "indicateurs", "age", "variablesPortrait", "motsCles", "donneesSupp", "format", "methodologie", "n"];
+const EDIT_FIELD_LABELS = { titre: "Nom des données", motsCles: "Mots-clés", ...FIELD_LABELS, source: "Source", derniereMaj: "Dernière MAJ" };
+const LONG_TEXT_FIELDS = new Set(["motsCles", "themes", "indicateurs", "variablesPortrait", "decoupage", "methodologie", "donneesSupp", "age"]);
+
+function EditForm({ draft, onChange, onSave, onCancel, isNew }) {
+  const set = (field, value) => onChange({ ...draft, [field]: value });
+  return (
+    <div className="bg-white rounded-xl border-2 border-aire-coral/40 p-5 md:p-6 mt-2">
+      <p className="text-xs font-bold uppercase tracking-widest text-aire-coral mb-4">
+        {isNew ? "Nouvelle source de données" : "Modification"}
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {EDIT_FIELD_ORDER.map(f => (
+          <div key={f} className={LONG_TEXT_FIELDS.has(f) ? "md:col-span-2" : ""}>
+            <label className="block text-[0.7rem] font-bold text-aire-night/60 uppercase tracking-wide mb-1">{EDIT_FIELD_LABELS[f]}</label>
+            {LONG_TEXT_FIELDS.has(f) ? (
+              <textarea
+                rows={2}
+                className="w-full px-3 py-2 text-sm border border-aire-glacier rounded-lg outline-none focus:ring-2 focus:ring-aire-royal/30 text-aire-night"
+                value={draft[f] || ""}
+                onChange={(e) => set(f, e.target.value)}
+              />
+            ) : (
+              <input
+                type="text"
+                className="w-full px-3 py-2 text-sm border border-aire-glacier rounded-lg outline-none focus:ring-2 focus:ring-aire-royal/30 text-aire-night"
+                value={draft[f] || ""}
+                onChange={(e) => set(f, e.target.value)}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 mt-5">
+        <button onClick={onSave} className="px-5 py-2.5 bg-aire-royal hover:bg-aire-night text-white text-sm font-bold rounded-xl transition-colors">
+          Enregistrer
+        </button>
+        <button onClick={onCancel} className="px-5 py-2.5 bg-white border border-aire-glacier hover:border-aire-night/30 text-aire-night text-sm font-bold rounded-xl transition-colors">
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SortHeader({ label, sortKey, sortConfig, onSort, className = "" }) {
+  const active = sortConfig.key === sortKey;
+  return (
+    <button
+      onClick={() => onSort(sortKey)}
+      className={`flex items-center gap-1 text-left text-[0.65rem] font-bold uppercase tracking-widest hover:text-aire-royal transition-colors ${active ? "text-aire-royal" : "text-aire-night/50"} ${className}`}
+    >
+      {label}
+      <span className="flex flex-col leading-none -space-y-0.5">
+        <Icon name="chevron-up" size={10} className={active && sortConfig.direction === "asc" ? "text-aire-royal" : "text-aire-night/25"} />
+        <Icon name="chevron-down" size={10} className={active && sortConfig.direction === "desc" ? "text-aire-royal" : "text-aire-night/25"} />
+      </span>
+    </button>
+  );
+}
+
+function LoginModal({ onClose, onSuccess }) {
+  const [email, setEmail] = useState("");
+  const [pwd, setPwd] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password: pwd });
+    setBusy(false);
+    if (error) setError(error.message);
+    else onSuccess();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-aire-night/60 flex items-center justify-center px-6" onClick={onClose}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+        <h2 className="font-heading font-bold text-aire-night text-xl mb-1">Connexion</h2>
+        <p className="text-aire-night/50 text-sm mb-5">Connectez-vous pour activer le mode édition.</p>
+        <div className="flex flex-col gap-3">
+          <input
+            type="email"
+            autoFocus
+            placeholder="Courriel"
+            className="w-full px-4 py-3 border border-aire-glacier rounded-xl outline-none focus:ring-2 focus:ring-aire-royal/30 text-aire-night"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <input
+            type="password"
+            placeholder="Mot de passe"
+            className={`w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-aire-royal/30 text-aire-night ${error ? "border-aire-coral" : "border-aire-glacier"}`}
+            value={pwd}
+            onChange={(e) => setPwd(e.target.value)}
+          />
+        </div>
+        {error && <p className="text-aire-coral text-xs font-bold mt-2">{error}</p>}
+        <div className="flex items-center gap-3 mt-5">
+          <button type="submit" disabled={busy} className="flex-1 px-5 py-2.5 bg-aire-royal hover:bg-aire-night text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
+            {busy ? "Connexion..." : "Se connecter"}
+          </button>
+          <button type="button" onClick={onClose} className="px-5 py-2.5 bg-white border border-aire-glacier text-aire-night text-sm font-bold rounded-xl transition-colors">
+            Annuler
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const DB_TO_UI = {
+  id: "id", titre: "titre", lien_web: "lienWeb", source: "source", derniere_maj: "derniereMaj",
+  annee: "annee", decoupage: "decoupage", themes: "themes", indicateurs: "indicateurs", age: "age",
+  variables_portrait: "variablesPortrait", mots_cles: "motsCles", donnees_supp: "donneesSupp",
+  format: "format", methodologie: "methodologie", n: "n",
+};
+const UI_TO_DB = Object.fromEntries(Object.entries(DB_TO_UI).map(([db, ui]) => [ui, db]));
+
+function rowToUi(row) {
+  const out = {};
+  for (const [db, ui] of Object.entries(DB_TO_UI)) out[ui] = row[db];
+  return out;
+}
+
+function uiToRow(item) {
+  const out = {};
+  for (const ui of Object.keys(UI_TO_DB)) {
+    if (ui === "id") continue;
+    out[UI_TO_DB[ui]] = item[ui] ?? "";
+  }
+  return out;
+}
+
+function normalize(str) {
+  return (str || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isUrl(v) {
+  return typeof v === "string" && /^https?:\/\//i.test(v.trim());
+}
+
+function FieldValue({ field, value }) {
+  if (!value) return <span className="text-aire-night/30 italic">—</span>;
+  if (field === "lienWeb" && isUrl(value)) {
+    return (
+      <a href={value} target="_blank" rel="noopener noreferrer" className="text-aire-royal font-medium hover:text-aire-night hover:underline break-all">
+        {value}
+      </a>
+    );
+  }
+  if (MULTILINE_FIELDS.has(field)) {
+    const parts = value.split(/\s*;\s*/).filter(Boolean);
+    if (parts.length > 1) {
+      return (
+        <span className="field-multiline">
+          {parts.map((p, i) => <span key={i} className="block">{p}</span>)}
+        </span>
+      );
+    }
+  }
+  return <span>{value}</span>;
+}
+
+function App() {
+  const [allData, setAllData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    const { data, error } = await supabaseClient.from("sources_donnees").select("*").order("titre");
+    if (error) {
+      console.error(error);
+      setLoadError(error.message);
+    } else {
+      setAllData(data.map(rowToUi));
+      setLoadError(null);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilters, setActiveFilters] = useState({ source: new Set(), format: new Set() });
+  const [isSourceOpen, setIsSourceOpen] = useState(false);
+  const [isFormatOpen, setIsFormatOpen] = useState(false);
+  const [sortConfig, setSortConfig] = useState({ key: "titre", direction: "asc" });
+  const toggleSort = (key) => {
+    setSortConfig(prev => prev.key === key ? { key, direction: prev.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" });
+  };
+  const [expandedId, setExpandedId] = useState(null);
+  const sourceRef = useRef(null);
+  const formatRef = useRef(null);
+
+  const [session, setSession] = useState(null);
+  const isLoggedIn = !!session;
+  const [showLogin, setShowLogin] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    supabaseClient.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabaseClient.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const logout = async () => {
+    await supabaseClient.auth.signOut();
+  };
+
+  const startEdit = (item) => {
+    setEditDraft({ ...item });
+    setEditingId(item.id);
+    setExpandedId(item.id);
+  };
+
+  const startNew = () => {
+    const blank = Object.fromEntries(EDIT_FIELD_ORDER.map(f => [f, ""]));
+    setEditDraft(blank);
+    setEditingId("new");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(null);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    if (editingId === "new") {
+      const { error } = await supabaseClient.from("sources_donnees").insert(uiToRow(editDraft));
+      if (error) { alert("Erreur d'enregistrement : " + error.message); setSaving(false); return; }
+    } else {
+      const { error } = await supabaseClient.from("sources_donnees").update(uiToRow(editDraft)).eq("id", editingId);
+      if (error) { alert("Erreur d'enregistrement : " + error.message); setSaving(false); return; }
+    }
+    await fetchData();
+    setSaving(false);
+    setEditingId(null);
+    setEditDraft(null);
+  };
+
+  const deleteItem = async (id) => {
+    if (!window.confirm("Supprimer définitivement cette source de données ?")) return;
+    const { error } = await supabaseClient.from("sources_donnees").delete().eq("id", id);
+    if (error) { alert("Erreur de suppression : " + error.message); return; }
+    if (expandedId === id) setExpandedId(null);
+    await fetchData();
+  };
+
+  useEffect(() => {
+    if (window.lucide) window.lucide.createIcons();
+  });
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (sourceRef.current && !sourceRef.current.contains(e.target)) setIsSourceOpen(false);
+      if (formatRef.current && !formatRef.current.contains(e.target)) setIsFormatOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const sourceOptions = useMemo(() => Array.from(new Set(allData.flatMap(d => splitSources(d.source)))).filter(Boolean).sort((a,b)=>a.localeCompare(b,'fr')), [allData]);
+  const formatOptions = useMemo(() => Array.from(new Set(allData.map(d => d.format))).filter(Boolean).sort((a,b)=>a.localeCompare(b,'fr')), [allData]);
+
+  const toggleFilter = (key, value) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev[key]);
+      next.has(value) ? next.delete(value) : next.add(value);
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const filterBySource = (value) => {
+    setActiveFilters(prev => ({ ...prev, source: new Set([value]) }));
+    setIsSourceOpen(false);
+  };
+
+  const resetAll = () => {
+    setSearchQuery("");
+    setActiveFilters({ source: new Set(), format: new Set() });
+  };
+
+  const filteredData = useMemo(() => {
+    const q = normalize(searchQuery);
+    return allData.filter(item => {
+      const matchesSearch = !q || normalize([
+        item.titre, item.motsCles, item.themes, item.source, item.decoupage, item.indicateurs, item.variablesPortrait
+      ].join(" ")).includes(q);
+
+      const matchesSource = activeFilters.source.size === 0 || splitSources(item.source).some(s => activeFilters.source.has(s));
+      const matchesFormat = activeFilters.format.size === 0 || activeFilters.format.has(item.format);
+
+      return matchesSearch && matchesSource && matchesFormat;
+    }).sort((a, b) => {
+      const av = normalize(a[sortConfig.key]);
+      const bv = normalize(b[sortConfig.key]);
+      if (av < bv) return sortConfig.direction === "asc" ? -1 : 1;
+      if (av > bv) return sortConfig.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [allData, searchQuery, activeFilters, sortConfig]);
+
+  const getBubbleClass = (active) =>
+    `px-3 py-1.5 text-[0.7rem] font-bold rounded-full border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
+      active ? "bg-aire-royal border-aire-royal text-white shadow-md" : "bg-white border-aire-glacier text-aire-night hover:border-aire-royal/40"
+    }`;
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center font-heading font-bold text-aire-night animate-pulse uppercase tracking-widest">
+        Chargement des données...
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} onSuccess={() => setShowLogin(false)} />}
+
+      {/* Header */}
+      <header className="bg-aire-night h-20 sticky top-0 z-50 flex items-center justify-between px-6 lg:px-12 shadow-xl">
+        <div className="flex items-center gap-4">
+          <img src="20251006_Aire_Logo_VF_LogoCirculaire_ProjetAire_Blanc.png" alt="Logo Projet AIRE" className="w-12 h-12 object-contain" />
+          <span className="font-heading font-bold text-white text-lg md:text-2xl tracking-tight leading-none uppercase">
+            Registre des sources de données
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {isLoggedIn && (
+            <>
+              <button onClick={() => exportJson(allData)} className="hidden md:flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white/70 hover:text-white border border-white/20 hover:border-white/40 rounded-xl transition-colors">
+                <Icon name="download" size={14} /> JSON
+              </button>
+              <button onClick={() => exportCsv(allData)} className="hidden md:flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white/70 hover:text-white border border-white/20 hover:border-white/40 rounded-xl transition-colors">
+                <Icon name="download" size={14} /> CSV
+              </button>
+              <button onClick={startNew} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-aire-night bg-aire-coral hover:bg-aire-burgundy hover:text-white rounded-xl transition-colors">
+                <Icon name="plus" size={14} /> Ajouter
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => isLoggedIn ? logout() : setShowLogin(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white/80 hover:text-white border border-white/20 hover:border-white/40 rounded-xl transition-colors"
+          >
+            <Icon name={isLoggedIn ? "log-out" : "lock"} size={14} />
+            {isLoggedIn ? "Déconnexion" : "Connexion"}
+          </button>
+        </div>
+      </header>
+
+      {/* Hero / recherche */}
+      <div className="bg-aire-royal pt-10 pb-12 px-6 lg:px-12 border-b border-white/5">
+        <div className="max-w-7xl mx-auto flex flex-col gap-6">
+          <div>
+            <h1 className="font-heading font-bold text-white text-2xl md:text-3xl">Trouver une source de données</h1>
+            <p className="text-aire-glacier text-sm md:text-base mt-1">Recherchez par mots-clés, thème ou source. La recherche ignore les accents.</p>
+          </div>
+
+          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4">
+            <div className="flex-1 relative group">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-aire-royal pointer-events-none">
+                <Icon name="search" size={20} />
+              </div>
+              <input
+                type="text"
+                placeholder="Rechercher par mots-clés"
+                className="w-full pl-14 pr-6 py-4 bg-white rounded-2xl shadow-xl border-0 focus:ring-4 focus:ring-aire-glacier/50 text-base outline-none transition-all placeholder-aire-night/40 font-medium text-aire-night"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            <button onClick={resetAll} className="text-white/60 hover:text-aire-coral transition-colors uppercase font-bold text-xs border-b border-white/20 hover:border-aire-coral pb-1 whitespace-nowrap px-2">
+              Réinitialiser
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <main className="flex-1 max-w-7xl mx-auto w-full px-6 lg:px-12 py-10">
+        {loadError && (
+          <div className="mb-6 px-5 py-3 bg-aire-coral/10 border border-aire-coral/30 rounded-xl text-aire-burgundy text-sm font-medium">
+            Erreur de connexion à la base de données : {loadError}
+          </div>
+        )}
+        <div className="flex items-center justify-between mb-6 px-1 flex-wrap gap-3">
+          <div className="text-sm font-medium text-aire-night/60">
+            <span className="text-aire-royal font-bold text-lg mr-2">{filteredData.length}</span>
+            {filteredData.length > 1 ? "résultats" : "résultat"}
+          </div>
+        </div>
+
+        {editingId === "new" && (
+          <div className="mb-6">
+            <EditForm draft={editDraft} onChange={setEditDraft} onSave={saveEdit} onCancel={cancelEdit} isNew={true} />
+          </div>
+        )}
+
+        <div className="bg-white rounded-[1.5rem] shadow-md border border-aire-glacier overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse min-w-[760px]">
+              <thead>
+                <tr className="bg-aire-ivory/80 border-b border-aire-glacier">
+                  <th className="px-6 md:px-8 py-4 w-[48%]"><SortHeader label="Nom des données" sortKey="titre" sortConfig={sortConfig} onSort={toggleSort} /></th>
+                  <th className="px-6 py-4 w-[26%]"><SortHeader label="Source" sortKey="source" sortConfig={sortConfig} onSort={toggleSort} /></th>
+                  <th className="px-6 py-4 w-[14%]"><SortHeader label="Dernière MAJ" sortKey="derniereMaj" sortConfig={sortConfig} onSort={toggleSort} /></th>
+                  {isLoggedIn && <th className="px-6 py-4 w-[8%]"></th>}
+                  <th className="px-6 py-4 w-[4%]"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-aire-glacier">
+                {filteredData.map(item => {
+                  const open = expandedId === item.id;
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr className="hover:bg-aire-ivory/50 transition-colors cursor-pointer" onClick={() => setExpandedId(open ? null : item.id)}>
+                        <td className="px-6 md:px-8 py-6 align-top">
+                          <span className="font-heading font-bold text-aire-night text-[0.95rem] leading-snug block">{item.titre}</span>
+                        </td>
+                        <td className="px-6 py-6 align-top">
+                          {item.source ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {splitSources(item.source).map(s => (
+                                <button
+                                  key={s}
+                                  onClick={(e) => { e.stopPropagation(); filterBySource(s); }}
+                                  title="Filtrer sur cette source"
+                                  className="text-left px-3 py-1.5 text-[0.78rem] font-bold rounded-full border border-aire-glacier bg-aire-glacier/30 text-aire-night hover:bg-aire-royal hover:border-aire-royal hover:text-white transition-all"
+                                >
+                                  {s}
+                                </button>
+                              ))}
+                            </div>
+                          ) : <span className="text-aire-night/30 italic text-sm">—</span>}
+                        </td>
+                        <td className="px-6 py-6 align-top text-[0.85rem] text-aire-night/70">
+                          {item.derniereMaj || <span className="text-aire-night/30 italic">—</span>}
+                        </td>
+                        {isLoggedIn && (
+                          <td className="px-6 py-6 align-top">
+                            <div className="flex items-center gap-2">
+                              <button onClick={(e) => { e.stopPropagation(); startEdit(item); }} title="Modifier" className="text-aire-night/40 hover:text-aire-royal transition-colors">
+                                <Icon name="pencil" size={17} />
+                              </button>
+                              <button onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }} title="Supprimer" className="text-aire-night/40 hover:text-aire-coral transition-colors">
+                                <Icon name="trash-2" size={17} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                        <td className="px-6 py-6 align-top text-right">
+                          <Icon name={open ? "chevron-up" : "chevron-down"} size={20} className="text-aire-royal" />
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={isLoggedIn ? 5 : 4} className="px-6 md:px-8 pb-8 pt-2 bg-aire-ivory/30 animate-fade-in">
+                            {editingId === item.id ? (
+                              <EditForm draft={editDraft} onChange={setEditDraft} onSave={saveEdit} onCancel={cancelEdit} isNew={false} />
+                            ) : (
+                              <table className="w-full border-collapse rounded-xl overflow-hidden border border-aire-glacier mt-2">
+                                <tbody>
+                                  {FIELD_ORDER.filter(f => item[f]).map((f, idx) => (
+                                    <tr key={f} className={idx % 2 === 0 ? "bg-aire-ivory" : "bg-white"}>
+                                      <th className="text-left align-top px-5 py-3 w-[28%] text-aire-night font-semibold text-sm border-b border-aire-glacier">{FIELD_LABELS[f]}</th>
+                                      <td className="px-5 py-3 text-sm text-aire-night/90 border-b border-aire-glacier leading-relaxed">
+                                        <FieldValue field={f} value={item[f]} />
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {filteredData.length === 0 && (
+            <div className="text-center py-20 text-aire-night/40 font-medium">
+              Aucune donnée ne correspond à votre recherche.
+            </div>
+          )}
+        </div>
+      </main>
+
+      <footer className="py-10 border-t border-aire-glacier mt-6 text-center opacity-50">
+        <span className="font-heading font-bold text-aire-night text-base uppercase">Registre des sources de données</span>
+        <p className="text-[0.6rem] font-bold uppercase tracking-widest mt-2 text-aire-night/60">© {new Date().getFullYear()} AIRE</p>
+      </footer>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
